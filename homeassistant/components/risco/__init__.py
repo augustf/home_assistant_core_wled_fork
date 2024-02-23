@@ -1,4 +1,6 @@
 """The Risco integration."""
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -12,6 +14,8 @@ from pyrisco import (
     RiscoLocal,
     UnauthorizedError,
 )
+from pyrisco.cloud.alarm import Alarm
+from pyrisco.cloud.event import Event
 from pyrisco.common import Partition, Zone
 
 from homeassistant.config_entries import ConfigEntry
@@ -33,10 +37,12 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
+    CONF_COMMUNICATION_DELAY,
     DATA_COORDINATOR,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     EVENTS_COORDINATOR,
+    MAX_COMMUNICATION_DELAY,
     TYPE_LOCAL,
 )
 
@@ -79,15 +85,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_setup_local_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data = entry.data
-    risco = RiscoLocal(data[CONF_HOST], data[CONF_PORT], data[CONF_PIN])
+    comm_delay = initial_delay = data.get(CONF_COMMUNICATION_DELAY, 0)
 
-    try:
-        await risco.connect()
-    except CannotConnectError as error:
-        raise ConfigEntryNotReady() from error
-    except UnauthorizedError:
-        _LOGGER.exception("Failed to login to Risco cloud")
-        return False
+    while True:
+        risco = RiscoLocal(
+            data[CONF_HOST],
+            data[CONF_PORT],
+            data[CONF_PIN],
+            communication_delay=comm_delay,
+        )
+        try:
+            await risco.connect()
+        except CannotConnectError as error:
+            if comm_delay >= MAX_COMMUNICATION_DELAY:
+                raise ConfigEntryNotReady() from error
+            comm_delay += 1
+        except UnauthorizedError:
+            _LOGGER.exception("Failed to login to Risco cloud")
+            return False
+        else:
+            break
+
+    if comm_delay > initial_delay:
+        new_data = data.copy()
+        new_data[CONF_COMMUNICATION_DELAY] = comm_delay
+        hass.config_entries.async_update_entry(entry, data=new_data)
 
     async def _error(error: Exception) -> None:
         _LOGGER.error("Error in Risco library: %s", error)
@@ -175,10 +197,12 @@ async def _update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-class RiscoDataUpdateCoordinator(DataUpdateCoordinator):
+class RiscoDataUpdateCoordinator(DataUpdateCoordinator[Alarm]):  # pylint: disable=hass-enforce-coordinator-module
     """Class to manage fetching risco data."""
 
-    def __init__(self, hass, risco, scan_interval):
+    def __init__(
+        self, hass: HomeAssistant, risco: RiscoCloud, scan_interval: int
+    ) -> None:
         """Initialize global risco data updater."""
         self.risco = risco
         interval = timedelta(seconds=scan_interval)
@@ -189,7 +213,7 @@ class RiscoDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=interval,
         )
 
-    async def _async_update_data(self):
+    async def _async_update_data(self) -> Alarm:
         """Fetch data from risco."""
         try:
             return await self.risco.get_state()
@@ -197,13 +221,15 @@ class RiscoDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(error) from error
 
 
-class RiscoEventsDataUpdateCoordinator(DataUpdateCoordinator):
+class RiscoEventsDataUpdateCoordinator(DataUpdateCoordinator[list[Event]]):  # pylint: disable=hass-enforce-coordinator-module
     """Class to manage fetching risco data."""
 
-    def __init__(self, hass, risco, eid, scan_interval):
+    def __init__(
+        self, hass: HomeAssistant, risco: RiscoCloud, eid: str, scan_interval: int
+    ) -> None:
         """Initialize global risco data updater."""
         self.risco = risco
-        self._store = Store(
+        self._store = Store[dict[str, Any]](
             hass, LAST_EVENT_STORAGE_VERSION, f"risco_{eid}_last_event_timestamp"
         )
         interval = timedelta(seconds=scan_interval)
@@ -214,7 +240,7 @@ class RiscoEventsDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=interval,
         )
 
-    async def _async_update_data(self):
+    async def _async_update_data(self) -> list[Event]:
         """Fetch data from risco."""
         last_store = await self._store.async_load() or {}
         last_timestamp = last_store.get(

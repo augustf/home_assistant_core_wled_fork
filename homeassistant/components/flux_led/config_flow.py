@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Final, cast
+from typing import Any, cast
 
 from flux_led.const import (
     ATTR_ID,
@@ -17,7 +17,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.components import dhcp
-from homeassistant.const import CONF_HOST
+from homeassistant.const import CONF_DEVICE, CONF_HOST
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.helpers import device_registry as dr
@@ -46,8 +46,6 @@ from .discovery import (
     async_update_entry_from_discovery,
 )
 from .util import format_as_flux_mac, mac_matches_by_one
-
-CONF_DEVICE: Final = "device"
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -121,11 +119,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 async_update_entry_from_discovery(
                     self.hass, entry, device, None, allow_update_mac
                 )
-                or entry.state == config_entries.ConfigEntryState.SETUP_RETRY
-            ):
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(entry.entry_id)
+                and entry.state
+                not in (
+                    config_entries.ConfigEntryState.SETUP_IN_PROGRESS,
+                    config_entries.ConfigEntryState.NOT_LOADED,
                 )
+            ) or entry.state == config_entries.ConfigEntryState.SETUP_RETRY:
+                self.hass.config_entries.async_schedule_reload(entry.entry_id)
             else:
                 async_dispatcher_send(
                     self.hass,
@@ -151,16 +151,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 device = await self._async_try_connect(host, device)
             except FLUX_LED_EXCEPTIONS:
                 return self.async_abort(reason="cannot_connect")
-            else:
-                discovered_mac = device[ATTR_ID]
-                if device[ATTR_MODEL_DESCRIPTION] or (
-                    discovered_mac is not None
-                    and (formatted_discovered_mac := dr.format_mac(discovered_mac))
-                    and formatted_discovered_mac != mac
-                    and mac_matches_by_one(discovered_mac, mac)
-                ):
-                    self._discovered_device = device
-                    await self._async_set_discovered_mac(device, True)
+
+            discovered_mac = device[ATTR_ID]
+            if device[ATTR_MODEL_DESCRIPTION] or (
+                discovered_mac is not None
+                and (formatted_discovered_mac := dr.format_mac(discovered_mac))
+                and formatted_discovered_mac != mac
+                and mac_matches_by_one(discovered_mac, mac)
+            ):
+                self._discovered_device = device
+                await self._async_set_discovered_mac(device, True)
         return await self.async_step_discovery_confirm()
 
     async def async_step_discovery_confirm(

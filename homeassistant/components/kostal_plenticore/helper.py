@@ -1,25 +1,25 @@
 """Code to handle the Plenticore API."""
 from __future__ import annotations
 
-import asyncio
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 import logging
 from typing import Any, TypeVar, cast
 
 from aiohttp.client_exceptions import ClientError
-from kostal.plenticore import (
-    PlenticoreApiClient,
-    PlenticoreApiException,
-    PlenticoreAuthenticationException,
+from pykoplenti import (
+    ApiClient,
+    ApiException,
+    AuthenticationException,
+    ExtendedApiClient,
 )
 
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -27,6 +27,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 _DataT = TypeVar("_DataT")
+_KNOWN_HOSTNAME_IDS = ("Network:Hostname", "Hostname")
 
 
 class Plenticore:
@@ -48,23 +49,23 @@ class Plenticore:
         return self.config_entry.data[CONF_HOST]
 
     @property
-    def client(self) -> PlenticoreApiClient:
+    def client(self) -> ApiClient:
         """Return the Plenticore API client."""
         return self._client
 
     async def async_setup(self) -> bool:
         """Set up Plenticore API client."""
-        self._client = PlenticoreApiClient(
+        self._client = ExtendedApiClient(
             async_get_clientsession(self.hass), host=self.host
         )
         try:
             await self._client.login(self.config_entry.data[CONF_PASSWORD])
-        except PlenticoreAuthenticationException as err:
+        except AuthenticationException as err:
             _LOGGER.error(
                 "Authentication exception connecting to %s: %s", self.host, err
             )
             return False
-        except (ClientError, asyncio.TimeoutError) as err:
+        except (ClientError, TimeoutError) as err:
             _LOGGER.error("Error connecting to %s", self.host)
             raise ConfigEntryNotReady from err
         else:
@@ -75,6 +76,7 @@ class Plenticore:
         )
 
         # get some device meta data
+        hostname_id = await get_hostname_id(self._client)
         settings = await self._client.get_setting_values(
             {
                 "devices:local": [
@@ -84,7 +86,7 @@ class Plenticore:
                     "Properties:VersionIOC",
                     "Properties:VersionMC",
                 ],
-                "scb:network": ["Hostname"],
+                "scb:network": [hostname_id],
             }
         )
 
@@ -97,7 +99,7 @@ class Plenticore:
             identifiers={(DOMAIN, device_local["Properties:SerialNo"])},
             manufacturer="Kostal",
             model=f"{prod1} {prod2}",
-            name=settings["scb:network"]["Hostname"],
+            name=settings["scb:network"][hostname_id],
             sw_version=f'IOC: {device_local["Properties:VersionIOC"]}'
             + f' MC: {device_local["Properties:VersionMC"]}',
         )
@@ -128,14 +130,14 @@ class DataUpdateCoordinatorMixin:
 
     async def async_read_data(
         self, module_id: str, data_id: str
-    ) -> dict[str, dict[str, str]] | None:
+    ) -> Mapping[str, Mapping[str, str]] | None:
         """Read data from Plenticore."""
         if (client := self._plenticore.client) is None:
             return None
 
         try:
             return await client.get_setting_values(module_id, data_id)
-        except PlenticoreApiException:
+        except ApiException:
             return None
 
     async def async_write_data(self, module_id: str, value: dict[str, str]) -> bool:
@@ -149,13 +151,13 @@ class DataUpdateCoordinatorMixin:
 
         try:
             await client.set_setting_values(module_id, value)
-        except PlenticoreApiException:
+        except ApiException:
             return False
-        else:
-            return True
+
+        return True
 
 
-class PlenticoreUpdateCoordinator(DataUpdateCoordinator[_DataT]):
+class PlenticoreUpdateCoordinator(DataUpdateCoordinator[_DataT]):  # pylint: disable=hass-enforce-coordinator-module
     """Base implementation of DataUpdateCoordinator for Plenticore data."""
 
     def __init__(
@@ -177,7 +179,7 @@ class PlenticoreUpdateCoordinator(DataUpdateCoordinator[_DataT]):
         self._fetch: dict[str, list[str]] = defaultdict(list)
         self._plenticore = plenticore
 
-    def start_fetch_data(self, module_id: str, data_id: str) -> None:
+    def start_fetch_data(self, module_id: str, data_id: str) -> CALLBACK_TYPE:
         """Start fetching the given data (module-id and data-id)."""
         self._fetch[module_id].append(data_id)
 
@@ -186,7 +188,7 @@ class PlenticoreUpdateCoordinator(DataUpdateCoordinator[_DataT]):
         async def force_refresh(event_time: datetime) -> None:
             await self.async_request_refresh()
 
-        async_call_later(self.hass, 2, force_refresh)
+        return async_call_later(self.hass, 2, force_refresh)
 
     def stop_fetch_data(self, module_id: str, data_id: str) -> None:
         """Stop fetching the given data (module-id and data-id)."""
@@ -194,8 +196,8 @@ class PlenticoreUpdateCoordinator(DataUpdateCoordinator[_DataT]):
 
 
 class ProcessDataUpdateCoordinator(
-    PlenticoreUpdateCoordinator[dict[str, dict[str, str]]]
-):
+    PlenticoreUpdateCoordinator[Mapping[str, Mapping[str, str]]]
+):  # pylint: disable=hass-enforce-coordinator-module
     """Implementation of PlenticoreUpdateCoordinator for process data."""
 
     async def _async_update_data(self) -> dict[str, dict[str, str]]:
@@ -210,18 +212,19 @@ class ProcessDataUpdateCoordinator(
         return {
             module_id: {
                 process_data.id: process_data.value
-                for process_data in fetched_data[module_id]
+                for process_data in fetched_data[module_id].values()
             }
             for module_id in fetched_data
         }
 
 
 class SettingDataUpdateCoordinator(
-    PlenticoreUpdateCoordinator[dict[str, dict[str, str]]], DataUpdateCoordinatorMixin
-):
+    PlenticoreUpdateCoordinator[Mapping[str, Mapping[str, str]]],
+    DataUpdateCoordinatorMixin,
+):  # pylint: disable=hass-enforce-coordinator-module
     """Implementation of PlenticoreUpdateCoordinator for settings data."""
 
-    async def _async_update_data(self) -> dict[str, dict[str, str]]:
+    async def _async_update_data(self) -> Mapping[str, Mapping[str, str]]:
         client = self._plenticore.client
 
         if not self._fetch or client is None:
@@ -233,7 +236,7 @@ class SettingDataUpdateCoordinator(
         return fetched_data
 
 
-class PlenticoreSelectUpdateCoordinator(DataUpdateCoordinator[_DataT]):
+class PlenticoreSelectUpdateCoordinator(DataUpdateCoordinator[_DataT]):  # pylint: disable=hass-enforce-coordinator-module
     """Base implementation of DataUpdateCoordinator for Plenticore data."""
 
     def __init__(
@@ -257,7 +260,7 @@ class PlenticoreSelectUpdateCoordinator(DataUpdateCoordinator[_DataT]):
 
     def start_fetch_data(
         self, module_id: str, data_id: str, all_options: list[str]
-    ) -> None:
+    ) -> CALLBACK_TYPE:
         """Start fetching the given data (module-id and entry-id)."""
         self._fetch[module_id].append(data_id)
         self._fetch[module_id].append(all_options)
@@ -267,7 +270,7 @@ class PlenticoreSelectUpdateCoordinator(DataUpdateCoordinator[_DataT]):
         async def force_refresh(event_time: datetime) -> None:
             await self.async_request_refresh()
 
-        async_call_later(self.hass, 2, force_refresh)
+        return async_call_later(self.hass, 2, force_refresh)
 
     def stop_fetch_data(
         self, module_id: str, data_id: str, all_options: list[str]
@@ -280,7 +283,7 @@ class PlenticoreSelectUpdateCoordinator(DataUpdateCoordinator[_DataT]):
 class SelectDataUpdateCoordinator(
     PlenticoreSelectUpdateCoordinator[dict[str, dict[str, str]]],
     DataUpdateCoordinatorMixin,
-):
+):  # pylint: disable=hass-enforce-coordinator-module
     """Implementation of PlenticoreUpdateCoordinator for select data."""
 
     async def _async_update_data(self) -> dict[str, dict[str, str]]:
@@ -409,3 +412,12 @@ class PlenticoreDataFormatter:
             return state
 
         return PlenticoreDataFormatter.EM_STATES.get(value)
+
+
+async def get_hostname_id(client: ApiClient) -> str:
+    """Check for known existing hostname ids."""
+    all_settings = await client.get_settings()
+    for entry in all_settings["scb:network"]:
+        if entry.id in _KNOWN_HOSTNAME_IDS:
+            return entry.id
+    raise ApiException("Hostname identifier not found in KNOWN_HOSTNAME_IDS")

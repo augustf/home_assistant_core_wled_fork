@@ -26,11 +26,11 @@ def async_describe_events(
 
     @callback
     def async_describe_zha_event(event: Event) -> dict[str, str]:
-        """Describe zha logbook event."""
+        """Describe ZHA logbook event."""
         device: dr.DeviceEntry | None = None
         device_name: str = "Unknown device"
         zha_device: ZHADevice | None = None
-        event_data: dict = event.data
+        event_data = event.data
         event_type: str | None = None
         event_subtype: str | None = None
 

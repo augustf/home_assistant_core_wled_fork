@@ -3,26 +3,22 @@ from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any, Generic, Union
+from typing import Any, Generic
 
 from pylitterbot import FeederRobot, LitterRobot
 
-from homeassistant.components.switch import (
-    DOMAIN as PLATFORM,
-    SwitchEntity,
-    SwitchEntityDescription,
-)
+from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .entity import LitterRobotEntity, _RobotT, async_update_unique_id
+from .entity import LitterRobotEntity, _RobotT
 from .hub import LitterRobotHub
 
 
-@dataclass
+@dataclass(frozen=True)
 class RequiredKeysMixin(Generic[_RobotT]):
     """A class that describes robot switch entity required keys."""
 
@@ -30,7 +26,7 @@ class RequiredKeysMixin(Generic[_RobotT]):
     set_fn: Callable[[_RobotT, bool], Coroutine[Any, Any, bool]]
 
 
-@dataclass
+@dataclass(frozen=True)
 class RobotSwitchEntityDescription(SwitchEntityDescription, RequiredKeysMixin[_RobotT]):
     """A class that describes robot switch entities."""
 
@@ -38,15 +34,15 @@ class RobotSwitchEntityDescription(SwitchEntityDescription, RequiredKeysMixin[_R
 
 
 ROBOT_SWITCHES = [
-    RobotSwitchEntityDescription[Union[LitterRobot, FeederRobot]](
+    RobotSwitchEntityDescription[LitterRobot | FeederRobot](
         key="night_light_mode_enabled",
-        name="Night Light Mode",
+        translation_key="night_light_mode",
         icons=("mdi:lightbulb-on", "mdi:lightbulb-off"),
         set_fn=lambda robot, value: robot.set_night_light(value),
     ),
-    RobotSwitchEntityDescription[Union[LitterRobot, FeederRobot]](
+    RobotSwitchEntityDescription[LitterRobot | FeederRobot](
         key="panel_lock_enabled",
-        name="Panel Lockout",
+        translation_key="panel_lockout",
         icons=("mdi:lock", "mdi:lock-open"),
         set_fn=lambda robot, value: robot.set_panel_lockout(value),
     ),
@@ -91,5 +87,4 @@ async def async_setup_entry(
         for robot in hub.account.robots
         if isinstance(robot, (LitterRobot, FeederRobot))
     ]
-    async_update_unique_id(hass, PLATFORM, entities)
     async_add_entities(entities)

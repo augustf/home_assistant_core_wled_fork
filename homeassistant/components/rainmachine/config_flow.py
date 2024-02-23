@@ -17,6 +17,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import aiohttp_client, config_validation as cv
 
 from .const import (
+    CONF_ALLOW_INACTIVE_ZONES_TO_RUN,
     CONF_DEFAULT_ZONE_RUN_TIME,
     CONF_USE_APP_RUN_TIMES,
     DEFAULT_PORT,
@@ -41,8 +42,8 @@ async def async_get_controller(
         await client.load_local(ip_address, password, port=port, use_ssl=ssl)
     except RainMachineError:
         return None
-    else:
-        return get_client_controller(client)
+
+    return get_client_controller(client)
 
 
 class RainMachineFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
@@ -172,7 +173,7 @@ class RainMachineOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(data=user_input)
 
         return self.async_show_form(
             step_id="init",
@@ -187,6 +188,12 @@ class RainMachineOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_USE_APP_RUN_TIMES,
                         default=self.config_entry.options.get(CONF_USE_APP_RUN_TIMES),
+                    ): bool,
+                    vol.Optional(
+                        CONF_ALLOW_INACTIVE_ZONES_TO_RUN,
+                        default=self.config_entry.options.get(
+                            CONF_ALLOW_INACTIVE_ZONES_TO_RUN
+                        ),
                     ): bool,
                 }
             ),

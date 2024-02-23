@@ -13,12 +13,12 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     CONF_API_VERSION,
+    CONF_LANGUAGE,
     CONF_NAME,
     CONF_UNIQUE_ID,
     CONF_UNIT_OF_MEASUREMENT,
     CONF_VALUE_TEMPLATE,
     EVENT_HOMEASSISTANT_STOP,
-    STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import PlatformNotReady, TemplateError
@@ -36,7 +36,6 @@ from .const import (
     CONF_FIELD,
     CONF_GROUP_FUNCTION,
     CONF_IMPORTS,
-    CONF_LANGUAGE,
     CONF_MEASUREMENT_NAME,
     CONF_QUERIES,
     CONF_QUERIES_FLUX,
@@ -248,10 +247,10 @@ class InfluxSensor(SensorEntity):
         """Get the latest data from Influxdb and updates the states."""
         self.data.update()
         if (value := self.data.value) is None:
-            value = STATE_UNKNOWN
+            value = None
         if self._value_template is not None:
             value = self._value_template.render_with_possible_json_value(
-                str(value), STATE_UNKNOWN
+                str(value), None
             )
 
         self._state = value
@@ -340,7 +339,7 @@ class InfluxQLSensorData:
             return
 
         self.query = (
-            f"select {self.group}({self.field}) as {INFLUX_CONF_VALUE} from"
+            f"select {self.group}({self.field}) as {INFLUX_CONF_VALUE} from"  # noqa: S608
             f" {self.measurement} where {where_clause}"
         )
 

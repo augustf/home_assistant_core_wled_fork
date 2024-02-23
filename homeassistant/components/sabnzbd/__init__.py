@@ -1,8 +1,9 @@
 """Support for monitoring an SABnzbd NZB client."""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 import logging
+from typing import Any
 
 from pysabnzbd import SabnzbdApiException
 import voluptuous as vol
@@ -12,7 +13,6 @@ from homeassistant.const import (
     CONF_API_KEY,
     CONF_HOST,
     CONF_NAME,
-    CONF_PATH,
     CONF_PORT,
     CONF_SENSORS,
     CONF_SSL,
@@ -80,7 +80,6 @@ CONFIG_SCHEMA = vol.Schema(
                 {
                     vol.Required(CONF_API_KEY): str,
                     vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
-                    vol.Optional(CONF_PATH): str,
                     vol.Optional(CONF_HOST, default=DEFAULT_HOST): cv.string,
                     vol.Optional(CONF_PORT, default=DEFAULT_PORT): cv.port,
                     vol.Optional(CONF_SENSORS): vol.All(
@@ -129,7 +128,7 @@ def async_get_entry_id_for_service_call(hass: HomeAssistant, call: ServiceCall) 
 def update_device_identifiers(hass: HomeAssistant, entry: ConfigEntry):
     """Update device identifiers to new identifiers."""
     device_registry = async_get(hass)
-    device_entry = device_registry.async_get_device({(DOMAIN, DOMAIN)})
+    device_entry = device_registry.async_get_device(identifiers={(DOMAIN, DOMAIN)})
     if device_entry and entry.entry_id in device_entry.config_entries:
         new_identifiers = {(DOMAIN, entry.entry_id)}
         _LOGGER.debug(
@@ -147,8 +146,7 @@ async def migrate_unique_id(hass: HomeAssistant, entry: ConfigEntry):
 
     @callback
     def async_migrate_callback(entity_entry: RegistryEntry) -> dict | None:
-        """
-        Define a callback to migrate appropriate SabnzbdSensor entities to new unique IDs.
+        """Define a callback to migrate appropriate SabnzbdSensor entities to new unique IDs.
 
         Old: description.key
         New: {entry_id}_description.key
@@ -192,7 +190,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     update_device_identifiers(hass, entry)
 
     @callback
-    def extract_api(func: Callable) -> Callable:
+    def extract_api(
+        func: Callable[[ServiceCall, SabnzbdApiData], Coroutine[Any, Any, None]],
+    ) -> Callable[[ServiceCall], Coroutine[Any, Any, None]]:
         """Define a decorator to get the correct api for a service call."""
 
         async def wrapper(call: ServiceCall) -> None:
@@ -227,7 +227,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         (SERVICE_RESUME, async_resume_queue, SERVICE_BASE_SCHEMA),
         (SERVICE_SET_SPEED, async_set_queue_speed, SERVICE_SPEED_SCHEMA),
     ):
-
         if hass.services.has_service(DOMAIN, service):
             continue
 
@@ -241,7 +240,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except SabnzbdApiException as err:
             _LOGGER.error(err)
 
-    async_track_time_interval(hass, async_update_sabnzbd, UPDATE_INTERVAL)
+    entry.async_on_unload(
+        async_track_time_interval(hass, async_update_sabnzbd, UPDATE_INTERVAL)
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

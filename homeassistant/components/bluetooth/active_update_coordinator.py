@@ -1,4 +1,7 @@
-"""A Bluetooth passive coordinator that receives data from advertisements but can also poll."""
+"""A Bluetooth passive coordinator.
+
+Receives data from advertisements but can also poll.
+"""
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
@@ -6,10 +9,10 @@ import logging
 from typing import Any, Generic, TypeVar
 
 from bleak import BleakError
+from bluetooth_data_tools import monotonic_time_coarse
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.debounce import Debouncer
-from homeassistant.util.dt import monotonic_time_coarse
 
 from . import BluetoothChange, BluetoothScanningMode, BluetoothServiceInfoBleak
 from .passive_update_coordinator import PassiveBluetoothDataUpdateCoordinator
@@ -21,10 +24,9 @@ _T = TypeVar("_T")
 
 
 class ActiveBluetoothDataUpdateCoordinator(
-    Generic[_T], PassiveBluetoothDataUpdateCoordinator
+    PassiveBluetoothDataUpdateCoordinator, Generic[_T]
 ):
-    """
-    A coordinator that receives passive data from advertisements but can also poll.
+    """A coordinator that receives passive data from advertisements but can also poll.
 
     Unlike the passive processor coordinator, this coordinator does call a parser
     method to parse the data from the advertisement.
@@ -33,16 +35,19 @@ class ActiveBluetoothDataUpdateCoordinator(
     out if a poll is needed. This should return True if it is and False if it is
     not needed.
 
-    def needs_poll_method(svc_info: BluetoothServiceInfoBleak, last_poll: float | None) -> bool:
+    def needs_poll_method(
+        svc_info: BluetoothServiceInfoBleak,
+        last_poll: float | None
+    ) -> bool:
         return True
 
-    If there has been no poll since HA started, `last_poll` will be None. Otherwise it is
-    the number of seconds since one was last attempted.
+    If there has been no poll since HA started, `last_poll` will be None.
+    Otherwise it is the number of seconds since one was last attempted.
 
     If a poll is needed, the coordinator will call poll_method. This is a coroutine.
-    It should return the same type of data as your update_method. The expectation is that
-    data from advertisements and from polling are being parsed and fed into a shared
-    object that represents the current state of the device.
+    It should return the same type of data as your update_method. The expectation is
+    that data from advertisements and from polling are being parsed and fed into
+    a shared object that represents the current state of the device.
 
     async def poll_method(svc_info: BluetoothServiceInfoBleak) -> YourDataType:
         return YourDataType(....)
@@ -101,9 +106,11 @@ class ActiveBluetoothDataUpdateCoordinator(
 
     def needs_poll(self, service_info: BluetoothServiceInfoBleak) -> bool:
         """Return true if time to try and poll."""
+        if self.hass.is_stopping:
+            return False
         poll_age: float | None = None
         if self._last_poll:
-            poll_age = monotonic_time_coarse() - self._last_poll
+            poll_age = service_info.time - self._last_poll
         return self._needs_poll_method(service_info, poll_age)
 
     async def _async_poll_data(
@@ -136,7 +143,7 @@ class ActiveBluetoothDataUpdateCoordinator(
             self._last_poll = monotonic_time_coarse()
 
         if not self.last_poll_successful:
-            self.logger.debug("%s: Polling recovered")
+            self.logger.debug("%s: Polling recovered", self.address)
             self.last_poll_successful = True
 
         self._async_handle_bluetooth_poll()
@@ -161,4 +168,10 @@ class ActiveBluetoothDataUpdateCoordinator(
         # We use bluetooth events to trigger the poll so that we scan as soon as
         # possible after a device comes online or back in range, if a poll is due
         if self.needs_poll(service_info):
-            self.hass.async_create_task(self._debounced_poll.async_call())
+            self._debounced_poll.async_schedule_call()
+
+    @callback
+    def _async_stop(self) -> None:
+        """Cancel debouncer and stop the callbacks."""
+        self._debounced_poll.async_cancel()
+        super()._async_stop()

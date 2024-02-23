@@ -1,8 +1,10 @@
-"""This component provides number entities for UniFi Protect."""
+"""Component providing number entities for UniFi Protect."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+import logging
+from typing import Any
 
 from pyunifiprotect.data import (
     Camera,
@@ -14,10 +16,9 @@ from pyunifiprotect.data import (
 
 from homeassistant.components.number import NumberEntity, NumberEntityDescription
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfTime
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DISPATCH_ADOPT, DOMAIN
@@ -26,21 +27,18 @@ from .entity import ProtectDeviceEntity, async_all_device_entities
 from .models import PermRequired, ProtectSetableKeysMixin, T
 from .utils import async_dispatch_id as _ufpd
 
-
-@dataclass
-class NumberKeysMixin:
-    """Mixin for required keys."""
-
-    ufp_max: int
-    ufp_min: int
-    ufp_step: int
+_LOGGER = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class ProtectNumberEntityDescription(
-    ProtectSetableKeysMixin[T], NumberEntityDescription, NumberKeysMixin
+    ProtectSetableKeysMixin[T], NumberEntityDescription
 ):
     """Describes UniFi Protect Number entity."""
+
+    ufp_max: int | float
+    ufp_min: int | float
+    ufp_step: int | float
 
 
 def _get_pir_duration(obj: Light) -> int:
@@ -57,6 +55,10 @@ def _get_auto_close(obj: Doorlock) -> int:
 
 async def _set_auto_close(obj: Doorlock, value: float) -> None:
     await obj.set_auto_close_time(timedelta(seconds=value))
+
+
+def _get_chime_duration(obj: Camera) -> int:
+    return int(obj.chime_duration.total_seconds())
 
 
 CAMERA_NUMBERS: tuple[ProtectNumberEntityDescription, ...] = (
@@ -100,6 +102,21 @@ CAMERA_NUMBERS: tuple[ProtectNumberEntityDescription, ...] = (
         ufp_required_field="feature_flags.can_optical_zoom",
         ufp_value="isp_settings.zoom_position",
         ufp_set_method="set_camera_zoom",
+        ufp_perm=PermRequired.WRITE,
+    ),
+    ProtectNumberEntityDescription(
+        key="chime_duration",
+        name="Chime Duration",
+        icon="mdi:bell",
+        entity_category=EntityCategory.CONFIG,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        ufp_min=1,
+        ufp_max=10,
+        ufp_step=0.1,
+        ufp_required_field="feature_flags.has_chime",
+        ufp_enabled="is_digital_chime",
+        ufp_value_fn=_get_chime_duration,
+        ufp_set_method="set_chime_duration",
         ufp_perm=PermRequired.WRITE,
     ),
 )
@@ -194,7 +211,8 @@ async def async_setup_entry(
     """Set up number entities for UniFi Protect integration."""
     data: ProtectData = hass.data[DOMAIN][entry.entry_id]
 
-    async def _add_new_device(device: ProtectAdoptableDeviceModel) -> None:
+    @callback
+    def _add_new_device(device: ProtectAdoptableDeviceModel) -> None:
         entities = async_all_device_entities(
             data,
             ProtectNumbers,
@@ -250,3 +268,13 @@ class ProtectNumbers(ProtectDeviceEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
         await self.entity_description.ufp_set(self.device, value)
+
+    @callback
+    def _async_get_state_attrs(self) -> tuple[Any, ...]:
+        """Retrieve data that goes into the current state of the entity.
+
+        Called before and after updating entity and state is only written if there
+        is a change.
+        """
+
+        return (self._attr_available, self._attr_native_value)

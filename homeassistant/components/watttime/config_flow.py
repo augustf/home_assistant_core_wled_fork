@@ -14,6 +14,7 @@ from homeassistant.const import (
     CONF_LATITUDE,
     CONF_LONGITUDE,
     CONF_PASSWORD,
+    CONF_SHOW_ON_MAP,
     CONF_USERNAME,
 )
 from homeassistant.core import callback
@@ -23,7 +24,6 @@ from homeassistant.helpers import aiohttp_client, config_validation as cv
 from .const import (
     CONF_BALANCING_AUTHORITY,
     CONF_BALANCING_AUTHORITY_ABBREV,
-    CONF_SHOW_ON_MAP,
     DOMAIN,
     LOGGER,
 )
@@ -244,7 +244,7 @@ class WattTimeOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(data=user_input)
 
         return self.async_show_form(
             step_id="init",

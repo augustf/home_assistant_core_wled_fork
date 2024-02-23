@@ -1,17 +1,23 @@
 """The PurpleAir integration."""
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from aiopurpleair.models.sensors import SensorModel
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE, Platform
+from homeassistant.const import (
+    ATTR_LATITUDE,
+    ATTR_LONGITUDE,
+    CONF_SHOW_ON_MAP,
+    Platform,
+)
 from homeassistant.core import HomeAssistant
-import homeassistant.helpers.device_registry as dr
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .config_flow import async_remove_sensor_by_device_id
-from .const import CONF_LAST_UPDATE_SENSOR_ADD, DOMAIN
+from .const import DOMAIN
 from .coordinator import PurpleAirDataUpdateCoordinator
 
 PLATFORMS = [Platform.SENSOR]
@@ -32,26 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_handle_entry_update(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle an options update."""
-    if entry.options.get(CONF_LAST_UPDATE_SENSOR_ADD) is True:
-        # If the last options update was to add a sensor, we reload the config entry:
-        await hass.config_entries.async_reload(entry.entry_id)
-
-
-async def async_remove_config_entry_device(
-    hass: HomeAssistant, config_entry: ConfigEntry, device_entry: dr.DeviceEntry
-) -> bool:
-    """Remove a config entry from a device."""
-    new_entry_options = async_remove_sensor_by_device_id(
-        hass,
-        config_entry,
-        device_entry.id,
-        # remove_device is set to False because in this instance, the device has
-        # already been removed:
-        remove_device=False,
-    )
-    return hass.config_entries.async_update_entry(
-        config_entry, options=new_entry_options
-    )
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -81,16 +68,30 @@ class PurpleAirEntity(CoordinatorEntity[PurpleAirDataUpdateCoordinator]):
         self._attr_device_info = DeviceInfo(
             configuration_url=self.coordinator.async_get_map_url(sensor_index),
             hw_version=self.sensor_data.hardware,
-            identifiers={(DOMAIN, str(self._sensor_index))},
+            identifiers={(DOMAIN, str(sensor_index))},
             manufacturer="PurpleAir, Inc.",
             model=self.sensor_data.model,
             name=self.sensor_data.name,
             sw_version=self.sensor_data.firmware_version,
         )
-        self._attr_extra_state_attributes = {
-            ATTR_LATITUDE: self.sensor_data.latitude,
-            ATTR_LONGITUDE: self.sensor_data.longitude,
-        }
+        self._entry = entry
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any]:
+        """Return entity specific state attributes."""
+        attrs = {}
+
+        # Displaying the geography on the map relies upon putting the latitude/longitude
+        # in the entity attributes with "latitude" and "longitude" as the keys.
+        # Conversely, we can hide the location on the map by using other keys, like
+        # "lati" and "long":
+        if self._entry.options.get(CONF_SHOW_ON_MAP):
+            attrs[ATTR_LATITUDE] = self.sensor_data.latitude
+            attrs[ATTR_LONGITUDE] = self.sensor_data.longitude
+        else:
+            attrs["lati"] = self.sensor_data.latitude
+            attrs["long"] = self.sensor_data.longitude
+        return attrs
 
     @property
     def sensor_data(self) -> SensorModel:

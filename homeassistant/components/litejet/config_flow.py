@@ -59,15 +59,12 @@ class LiteJetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             port = user_input[CONF_PORT]
 
-            await self.async_set_unique_id(port)
-            self._abort_if_unique_id_configured()
-
             try:
-                system = pylitejet.LiteJet(port)
-                system.close()
+                system = await pylitejet.open(port)
             except SerialException:
                 errors[CONF_PORT] = "open_failed"
             else:
+                await system.close()
                 return self.async_create_entry(
                     title=port,
                     data={CONF_PORT: port},
@@ -78,10 +75,6 @@ class LiteJetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required(CONF_PORT): str}),
             errors=errors,
         )
-
-    async def async_step_import(self, import_data):
-        """Import litejet config from configuration.yaml."""
-        return self.async_create_entry(title=import_data[CONF_PORT], data=import_data)
 
     @staticmethod
     @callback

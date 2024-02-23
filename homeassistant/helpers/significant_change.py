@@ -14,7 +14,7 @@ async def async_check_significant_change(
     new_state: str,
     new_attrs: dict,
     **kwargs,
-) -> Optional[bool]
+) -> bool | None
 ```
 
 Return boolean to indicate if significantly changed. If don't know, return None.
@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any, Optional, Union
+from typing import Any
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, State, callback
@@ -43,24 +43,24 @@ CheckTypeFunc = Callable[
     [
         HomeAssistant,
         str,
-        Union[dict, MappingProxyType],
+        dict | MappingProxyType,
         str,
-        Union[dict, MappingProxyType],
+        dict | MappingProxyType,
     ],
-    Optional[bool],
+    bool | None,
 ]
 
 ExtraCheckTypeFunc = Callable[
     [
         HomeAssistant,
         str,
-        Union[dict, MappingProxyType],
+        dict | MappingProxyType,
         Any,
         str,
-        Union[dict, MappingProxyType],
+        dict | MappingProxyType,
         Any,
     ],
-    Optional[bool],
+    bool | None,
 ]
 
 
@@ -82,7 +82,8 @@ async def _initialize(hass: HomeAssistant) -> None:
 
     functions = hass.data[DATA_FUNCTIONS] = {}
 
-    async def process_platform(
+    @callback
+    def process_platform(
         hass: HomeAssistant, component_name: str, platform: Any
     ) -> None:
         """Process a significant change platform."""
@@ -145,6 +146,15 @@ def check_percentage_change(
             return float("inf")
 
     return _check_numeric_change(old_state, new_state, change, percentage_change)
+
+
+def check_valid_float(value: str | int | float) -> bool:
+    """Check if given value is a valid float."""
+    try:
+        float(value)
+    except ValueError:
+        return False
+    return True
 
 
 class SignificantlyChangedChecker:

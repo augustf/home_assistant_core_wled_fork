@@ -1,4 +1,5 @@
 """Tests for the Modern Forms config flow."""
+from ipaddress import ip_address
 from unittest.mock import MagicMock, patch
 
 import aiohttp
@@ -34,7 +35,6 @@ async def test_full_user_flow_implementation(
 
     assert result.get("step_id") == "user"
     assert result.get("type") == FlowResultType.FORM
-    assert "flow_id" in result
 
     with patch(
         "homeassistant.components.modern_forms.async_setup_entry",
@@ -66,8 +66,8 @@ async def test_full_zeroconf_flow_implementation(
         DOMAIN,
         context={"source": SOURCE_ZEROCONF},
         data=zeroconf.ZeroconfServiceInfo(
-            host="192.168.1.123",
-            addresses=["192.168.1.123"],
+            ip_address=ip_address("192.168.1.123"),
+            ip_addresses=[ip_address("192.168.1.123")],
             hostname="example.local.",
             name="mock_name",
             port=None,
@@ -82,7 +82,6 @@ async def test_full_zeroconf_flow_implementation(
     assert result.get("description_placeholders") == {CONF_NAME: "example"}
     assert result.get("step_id") == "zeroconf_confirm"
     assert result.get("type") == FlowResultType.FORM
-    assert "flow_id" in result
 
     flow = flows[0]
     assert "context" in flow
@@ -136,8 +135,8 @@ async def test_zeroconf_connection_error(
         DOMAIN,
         context={"source": SOURCE_ZEROCONF},
         data=zeroconf.ZeroconfServiceInfo(
-            host="192.168.1.123",
-            addresses=["192.168.1.123"],
+            ip_address=ip_address("192.168.1.123"),
+            ip_addresses=[ip_address("192.168.1.123")],
             hostname="example.local.",
             name="mock_name",
             port=None,
@@ -168,8 +167,8 @@ async def test_zeroconf_confirm_connection_error(
             CONF_NAME: "test",
         },
         data=zeroconf.ZeroconfServiceInfo(
-            host="192.168.1.123",
-            addresses=["192.168.1.123"],
+            ip_address=ip_address("192.168.1.123"),
+            ip_addresses=[ip_address("192.168.1.123")],
             hostname="example.com.",
             name="mock_name",
             port=None,
@@ -238,8 +237,8 @@ async def test_zeroconf_with_mac_device_exists_abort(
         DOMAIN,
         context={"source": SOURCE_ZEROCONF},
         data=zeroconf.ZeroconfServiceInfo(
-            host="192.168.1.123",
-            addresses=["192.168.1.123"],
+            ip_address=ip_address("192.168.1.123"),
+            ip_addresses=[ip_address("192.168.1.123")],
             hostname="example.local.",
             name="mock_name",
             port=None,

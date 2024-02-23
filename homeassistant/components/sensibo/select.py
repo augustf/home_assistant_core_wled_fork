@@ -20,16 +20,17 @@ from .entity import SensiboDeviceBaseEntity, async_handle_api_call
 PARALLEL_UPDATES = 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class SensiboSelectDescriptionMixin:
     """Mixin values for Sensibo entities."""
 
     data_key: str
     value_fn: Callable[[SensiboDevice], str | None]
     options_fn: Callable[[SensiboDevice], list[str] | None]
+    transformation: Callable[[SensiboDevice], dict | None]
 
 
-@dataclass
+@dataclass(frozen=True)
 class SensiboSelectEntityDescription(
     SelectEntityDescription, SensiboSelectDescriptionMixin
 ):
@@ -40,18 +41,20 @@ DEVICE_SELECT_TYPES = (
     SensiboSelectEntityDescription(
         key="horizontalSwing",
         data_key="horizontal_swing_mode",
-        name="Horizontal swing",
         icon="mdi:air-conditioner",
         value_fn=lambda data: data.horizontal_swing_mode,
         options_fn=lambda data: data.horizontal_swing_modes,
+        translation_key="horizontalswing",
+        transformation=lambda data: data.horizontal_swing_modes_translated,
     ),
     SensiboSelectEntityDescription(
         key="light",
         data_key="light_mode",
-        name="Light",
         icon="mdi:flashlight",
         value_fn=lambda data: data.light_mode,
         options_fn=lambda data: data.light_modes,
+        translation_key="light",
+        transformation=lambda data: data.light_modes_translated,
     ),
 )
 
@@ -103,9 +106,16 @@ class SensiboSelect(SensiboDeviceBaseEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Set state to the selected option."""
         if self.entity_description.key not in self.device_data.active_features:
+            hvac_mode = self.device_data.hvac_mode if self.device_data.hvac_mode else ""
             raise HomeAssistantError(
                 f"Current mode {self.device_data.hvac_mode} doesn't support setting"
-                f" {self.entity_description.name}"
+                f" {self.entity_description.name}",
+                translation_domain=DOMAIN,
+                translation_key="select_option_not_available",
+                translation_placeholders={
+                    "hvac_mode": hvac_mode,
+                    "key": self.entity_description.key,
+                },
             )
 
         await self.async_send_api_call(
@@ -116,6 +126,10 @@ class SensiboSelect(SensiboDeviceBaseEntity, SelectEntity):
     @async_handle_api_call
     async def async_send_api_call(self, key: str, value: Any) -> bool:
         """Make service call to api."""
+        transformation = self.entity_description.transformation(self.device_data)
+        if TYPE_CHECKING:
+            assert transformation is not None
+
         data = {
             "name": self.entity_description.key,
             "value": value,
@@ -125,7 +139,7 @@ class SensiboSelect(SensiboDeviceBaseEntity, SelectEntity):
         result = await self._client.async_set_ac_state_property(
             self._device_id,
             data["name"],
-            data["value"],
+            transformation[data["value"]],
             data["ac_states"],
             data["assumed_state"],
         )
